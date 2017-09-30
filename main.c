@@ -7,6 +7,15 @@
 #include <stdint.h>
 #include <stdio.h>
 
+typedef struct VulkanBase {
+	VkInstance instance;
+	VkSurfaceKHR surface;
+	VkPhysicalDevice phys_device;
+	VkDevice device;
+	VkQueue graphics_queue, present_queue;
+	uint32_t graphics_index, present_index;
+} VulkanBase;
+
 void init_window(GLFWwindow** window){
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -14,8 +23,13 @@ void init_window(GLFWwindow** window){
 	*window = glfwCreateWindow(800, 600, "Photon", NULL, NULL);
 }
 
-bool create_instance(VkInstance* instance){
-	uint32_t count;
+void cleanup(VulkanBase base){
+	vkDestroyDevice(base.device, NULL);
+	vkDestroySurfaceKHR(base.instance, base.surface, NULL);
+	vkDestroyInstance(base.instance, NULL);
+}
+
+bool create_instance(VulkanBase* base){
 	VkApplicationInfo app_info = {0};
 	app_info = (VkApplicationInfo){
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -31,84 +45,91 @@ bool create_instance(VkInstance* instance){
 		.pApplicationInfo = &app_info,
 		.enabledLayerCount = 0,
 	};
+	uint32_t count;
 	create_info.ppEnabledExtensionNames = glfwGetRequiredInstanceExtensions(&count);
 	create_info.enabledExtensionCount = count;
-	return vkCreateInstance(&create_info, NULL, instance) == VK_SUCCESS;
+	return vkCreateInstance(&create_info, NULL, &(base->instance)) == VK_SUCCESS;
 }
 
-uint32_t graphics_queue_index(VkPhysicalDevice* device){
-	uint32_t count;
+bool valid_phys_device(VulkanBase* base, VkPhysicalDevice phys_device){
+	VkBool32 present_support;
+	uint32_t count, graphics_index = -1, present_index = -1;
 	VkQueueFamilyProperties queues[32];
-	vkGetPhysicalDeviceQueueFamilyProperties(*device, &count, NULL);
-	vkGetPhysicalDeviceQueueFamilyProperties(*device, &count, queues);
+	vkGetPhysicalDeviceQueueFamilyProperties(phys_device, &count, NULL);
+	vkGetPhysicalDeviceQueueFamilyProperties(phys_device, &count, queues);
 	for(uint32_t i = 0; i < count; i++){
+		vkGetPhysicalDeviceSurfaceSupportKHR(phys_device, i, base->surface, &present_support);
+		if(present_support)
+			present_index = i;
 		if(queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-			return i;
+			graphics_index = i;
 	}
-	return -1;
-}
-
-bool pick_phys_device(VkPhysicalDevice* phys_device, uint32_t* queue_index, VkInstance instance){
-	uint32_t count;
-	VkPhysicalDevice devices[32];
-	vkEnumeratePhysicalDevices(instance, &count, NULL);
-	vkEnumeratePhysicalDevices(instance, &count, devices);
-	for(uint32_t i = 0; i < count; i++){
-		uint32_t temp = graphics_queue_index(devices + i);
-		if(temp != -1){
-			*phys_device = devices[i];
-			*queue_index = temp;
-			return true;
-		}
+	if(graphics_index != -1 && present_index != -1){
+		base->phys_device = phys_device;
+		base->graphics_index = graphics_index;
+		base->present_index = present_index;
+		return true;
 	}
 	return false;
 }
 
-bool create_logical_device(VkDevice* logical_device, VkPhysicalDevice phys_device, uint32_t queue_index){
-	float priority = 1.0f;
-	VkDeviceQueueCreateInfo queue_create_info = { 0 };
-	queue_create_info = (VkDeviceQueueCreateInfo){
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = queue_index,
-		.pQueuePriorities = &priority,
-		.queueCount = 1,
-	};
-	VkPhysicalDeviceFeatures features = { 0 };
-	VkDeviceCreateInfo dev_create_info = { 0 };
-	dev_create_info = (VkDeviceCreateInfo){
-		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pQueueCreateInfos = &queue_create_info,
-		.pEnabledFeatures = &features,
-		.queueCreateInfoCount = 1,
-		.enabledLayerCount = 0,
-	};
-	return vkCreateDevice(phys_device, &dev_create_info, NULL, logical_device) == VK_SUCCESS;
+bool pick_phys_device(VulkanBase* base){
+	uint32_t count;
+	VkPhysicalDevice devices[32];
+	vkEnumeratePhysicalDevices(base->instance, &count, NULL);
+	vkEnumeratePhysicalDevices(base->instance, &count, devices);
+	for(uint32_t i = 0; i < count; i++){
+		if(valid_phys_device(base, devices[i]))
+			return true;
+	}
+	return false;
 }
 
-void init_vulkan(VkInstance* instance, VkPhysicalDevice* phys_device, VkDevice* logical_device, VkQueue* graphics_queue){
-	uint32_t queue_index;
-	create_instance(instance);
-	pick_phys_device(phys_device, &queue_index, *instance);
-	create_logical_device(logical_device, *phys_device, queue_index);
-	vkGetDeviceQueue(*logical_device, queue_index, 0, graphics_queue);
+bool create_logical_device(VulkanBase* base){
+	uint32_t family_indices[2] = { base->graphics_index, base->present_index };
+	VkDeviceQueueCreateInfo queue_create_infos[2] = {0};
+	for(uint32_t i = 0; i < 2; i++){
+		float priority = 1.0f;
+		queue_create_infos[i] = (VkDeviceQueueCreateInfo){
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = family_indices[i],
+			.pQueuePriorities = &priority,
+			.queueCount = 1,
+		};
+	}
+	VkPhysicalDeviceFeatures features = {0};
+	VkDeviceCreateInfo dev_create_info = {0};
+	dev_create_info = (VkDeviceCreateInfo){
+		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.pQueueCreateInfos = queue_create_infos,
+		.pEnabledFeatures = &features,
+		.queueCreateInfoCount = 2,
+		.enabledLayerCount = 0,
+	};
+	return vkCreateDevice(base->phys_device, &dev_create_info, NULL, &(base->device)) == VK_SUCCESS;
+}
+
+void init_vulkan(GLFWwindow* window, VulkanBase* base){
+	create_instance(base);
+	glfwCreateWindowSurface(base->instance, window, NULL, &(base->surface));
+	pick_phys_device(base);
+	create_logical_device(base);
+	vkGetDeviceQueue(base->device, base->graphics_index, 0, &(base->graphics_queue));
+	vkGetDeviceQueue(base->device, base->present_index, 0, &(base->present_queue));
 }
 
 int main(void){
 	GLFWwindow* window;
 	init_window(&window);
 
-	VkInstance instance;
-	VkPhysicalDevice phys_device;
-	VkDevice logical_device;
-	VkQueue graphics_queue;
-	init_vulkan(&instance, &phys_device, &logical_device, &graphics_queue);
+	VulkanBase base;
+	init_vulkan(window, &base);
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 	}
 
-	vkDestroyInstance(instance, NULL);
-	vkDestroyDevice(logical_device, NULL);
+	cleanup(base);
 	glfwDestroyWindow(window);
 	glfwTerminate();
 }
