@@ -6,8 +6,15 @@
 #include <stdint.h>
 #include <stdio.h>
 
+void init_window(GLFWwindow** window){
+	glfwInit();
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+	*window = glfwCreateWindow(800, 600, "Photon", NULL, NULL);
+}
+
 bool is_device_valid(VkPhysicalDevice* device){
-	uint32_t count = 0;
+	uint32_t count;
 	VkQueueFamilyProperties queues[32];
 	vkGetPhysicalDeviceQueueFamilyProperties(*device, &count, NULL);
 	vkGetPhysicalDeviceQueueFamilyProperties(*device, &count, queues);
@@ -18,14 +25,8 @@ bool is_device_valid(VkPhysicalDevice* device){
 	return false;
 }
 
-void init(GLFWwindow** window, VkInstance* instance, VkPhysicalDevice* device){
+void init_vulkan(VkInstance* instance, VkPhysicalDevice* device){
 	uint32_t count;
-
-	/* GLFW WINDOW */
-	glfwInit();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-    *window = glfwCreateWindow(800, 600, "Photon", NULL, NULL);
 
 	/* VULKAN INSTANCE */
 	VkApplicationInfo app_info = {
@@ -41,7 +42,6 @@ void init(GLFWwindow** window, VkInstance* instance, VkPhysicalDevice* device){
 		.pApplicationInfo = &app_info,
 		.enabledLayerCount = 0,
 	};
-	count = 0;
 	create_info.ppEnabledExtensionNames = glfwGetRequiredInstanceExtensions(&count);
 	create_info.enabledExtensionCount = count;
 	if(vkCreateInstance(&create_info, NULL, instance) != VK_SUCCESS){
@@ -49,7 +49,6 @@ void init(GLFWwindow** window, VkInstance* instance, VkPhysicalDevice* device){
 	}
 
 	/* VULKAN DEVICE */
-	count = 0;
 	*device = VK_NULL_HANDLE;
 	VkPhysicalDevice devices[32];
 	vkEnumeratePhysicalDevices(*instance, &count, NULL);
@@ -67,15 +66,17 @@ void init(GLFWwindow** window, VkInstance* instance, VkPhysicalDevice* device){
 
 int main(void){
 	GLFWwindow* window;
+	init_window(&window);
+
 	VkInstance instance;
 	VkPhysicalDevice device;
-	init(&window, &instance, &device);
+	init_vulkan(&instance, &device);
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
-    }
+	}
 
 	vkDestroyInstance(instance, NULL);
 	glfwDestroyWindow(window);
-    glfwTerminate();
+	glfwTerminate();
 }
